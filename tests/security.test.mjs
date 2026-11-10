@@ -1,0 +1,16 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {scryptSync} from 'node:crypto';
+import {validID,dateKey,title,verifyPassword,newSession,isTeacher,sameOrigin,checkConfig} from '../lib/security.mjs';
+process.env.APP_ORIGIN='http://localhost:3000';
+process.env.SESSION_SECRET='local-test-secret-'.repeat(4);
+const salt='01020304050607080910111213141516';
+process.env.TEACHER_PASSWORD_HASH='scrypt:'+salt+':'+scryptSync('test-only-long-password',salt,64).toString('hex');
+test('密码哈希不接受错误密码',()=>{assert.equal(verifyPassword('test-only-long-password'),true);assert.equal(verifyPassword('wrong'),false);});
+test('会话验证拒绝伪造和缺失值',()=>{const s=newSession();assert.equal(isTeacher(new Request('http://localhost',{headers:{cookie:'workbook_teacher='+s}})),true);assert.equal(isTeacher(new Request('http://localhost',{headers:{cookie:'workbook_teacher='+s+'x'}})),false);assert.equal(isTeacher(new Request('http://localhost')),false);});
+test('写请求来源校验',()=>{sameOrigin(new Request('http://localhost',{headers:{origin:'http://localhost:3000'}}));assert.throws(()=>sameOrigin(new Request('http://localhost',{headers:{origin:'https://other.example'}})));assert.throws(()=>sameOrigin(new Request('http://localhost')));});
+test('预览来源只允许当前项目的 HTTPS 域名',()=>{process.env.APP_PREVIEW_HOST_PREFIX='companion-workbo-i1q9mpnhx5-';try{for(const origin of ['https://companion-workbo-i1q9mpnhx5-z740l4v0oz.preview.iga-pages.bytedance.net','https://companion-workbo-i1q9mpnhx5-projabc123.preview.iga-pages.com'])sameOrigin(new Request('https://localhost',{headers:{origin}}));for(const origin of ['https://other-project-z740l4v0oz.preview.iga-pages.com','https://companion-workbo-i1q9mpnhx5-abc.preview.iga-pages.com.evil.example','http://companion-workbo-i1q9mpnhx5-abc.preview.iga-pages.com','https://companion-workbo-i1q9mpnhx5-abc.preview.iga-pages.com:8443'])assert.throws(()=>sameOrigin(new Request('https://localhost',{headers:{origin}})));}finally{delete process.env.APP_PREVIEW_HOST_PREFIX;}});
+test('拒绝非法标识与空名称',()=>{assert.throws(()=>validID('../private'));assert.throws(()=>title('  '));assert.equal(title('  一起数数 '),'一起数数');});
+test('日期校验拒绝不存在的日期',()=>{assert.equal(dateKey('2026-11-09'),'2026-11-09');assert.throws(()=>dateKey('2026-02-30'));assert.throws(()=>dateKey('today'));});
+test('家庭测试部署关闭老师会话和密码验证',()=>{const old=process.env.TEACHER_DISABLED;const session=newSession();process.env.TEACHER_DISABLED='1';try{assert.equal(isTeacher(new Request('http://localhost',{headers:{cookie:'workbook_teacher='+session}})),false);assert.throws(()=>verifyPassword('test-only-long-password'),/仅开放家庭端/);}finally{if(old===undefined)delete process.env.TEACHER_DISABLED;else process.env.TEACHER_DISABLED=old;}});
+test('正式运行不得静默回退本地存储',()=>{const old=process.env.NODE_ENV;process.env.NODE_ENV='production';delete process.env.LOCAL_ONLY;process.env.DATA_BACKEND='local';assert.throws(checkConfig);process.env.DATA_BACKEND='iga';process.env.ASSET_BACKEND='local';assert.throws(checkConfig);process.env.NODE_ENV=old;});

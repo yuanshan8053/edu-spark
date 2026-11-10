@@ -1,0 +1,36 @@
+import assert from 'node:assert/strict';
+import {readFile} from 'node:fs/promises';
+const base=process.env.TEST_ORIGIN||'http://localhost:3000';
+const password=process.env.TEST_TEACHER_PASSWORD;
+if(!password)throw new Error('请设置本地测试密码变量，不要使用正式密码。');
+let cookie='',count=0;
+async function request(path,method='GET',data,auth=false,extra={}){const headers={...extra};if(method!=='GET')headers.Origin=base;if(auth)headers.Cookie=cookie;if(data&&typeof data!=='string'&&!Buffer.isBuffer(data)){headers['Content-Type']='application/json';data=JSON.stringify(data);}const r=await fetch(base+'/api/'+path,{method,headers,body:data});let body;try{body=await r.json();}catch(e){}return {r,body};}
+function check(value,message){assert.ok(value,message);console.log('PASS '+(++count)+' '+message);}
+let result=await request('admin/lessons');check(result.r.status===401,'未登录不能读取老师管理数据');
+result=await request('admin/lessons','POST',{name:'伪造题册',date:'2026-11-09',assets:[]});check(result.r.status===401,'未登录不能创建题册');
+result=await request('login','POST',{password});check(result.r.ok,'本地老师登录');cookie=result.r.headers.get('set-cookie').split(';')[0];check(/HttpOnly/.test(result.r.headers.get('set-cookie')),'会话采用 HttpOnly Cookie');
+const session=await request('session','GET',undefined,true);check(session.body.teacher===true,'会话身份可回读');
+const bytes=await readFile('public/samples/count.jpg');
+result=await request('admin/assets','POST',bytes,true,{'Content-Type':'image/jpeg','X-File-Name':encodeURIComponent('看图加法测试.jpg')});check(result.r.status===201,'真实 JPEG 上传和归一化');const asset=result.body.asset;
+result=await request('admin/assets','POST',Buffer.from('not an image'),true,{'Content-Type':'image/jpeg'});check(result.r.status===400,'拒绝伪装成图片的无效内容');
+result=await request('admin/lessons','POST',{name:'本地验证题册',date:session.body.today,assets:[asset.id]},true);check(result.r.status===201,'创建题册草稿');let lesson=result.body.lesson;
+result=await request('lessons/'+lesson.id);check(result.r.status===404,'草稿不向家庭公开');
+result=await request('lessons/'+lesson.id+'/pages/'+lesson.pages[0].id);check(result.r.status===404,'草稿题图不能匿名访问');
+result=await request('admin/lessons/'+lesson.id,'PATCH',{status:'published'},true);check(result.r.ok&&result.body.lesson.status==='published','发布并回读题册状态');
+result=await request('lessons');check(result.body.lessons.some(l=>l.id===lesson.id),'家庭可读取已发布题册');
+const image=await fetch(base+lesson.pages[0].url);check(image.ok&&image.headers.get('content-type')==='image/jpeg'&&(await image.arrayBuffer()).byteLength>10000,'家庭可取得真实题图');
+result=await request('admin/lessons/'+lesson.id,'PATCH',{name:'试图修改已发布原图'},true);check(result.r.status===409,'已发布题册不能改动名称或题图顺序');
+result=await request('admin/lessons/'+lesson.id,'PATCH',{status:'draft'},true);check(result.r.status===409,'不能通过回退草稿绕过版本冻结');
+result=await request('admin/lessons/'+lesson.id,'PATCH',{status:'archived'});check(result.r.status===401,'普通家庭不能下架题册');
+const cross=await fetch(base+'/api/admin/lessons/'+lesson.id,{method:'PATCH',headers:{Origin:'https://untrusted.example',Cookie:cookie,'Content-Type':'application/json'},body:JSON.stringify({status:'archived'})});check(cross.status===403,'带老师会话的跨来源写请求被拒绝');
+result=await request('admin/teacher-photo','POST',{assetId:asset.id,consent:true},true);check(result.r.status===400,'题图不能直接作为老师照片配置');
+result=await request('admin/assets','POST',bytes,true,{'Content-Type':'image/jpeg','X-Asset-Use':'teacher'});const photo=result.body.asset;
+result=await request('admin/teacher-photo','POST',{assetId:photo.id,consent:false},true);check(result.r.status===400,'公开老师照片必须明确同意');
+result=await request('admin/teacher-photo','POST',{assetId:photo.id,consent:true},true);check(result.r.ok,'老师照片独立配置');
+result=await request('teacher-photo');check(result.body.available===true,'家庭可选择老师鼓励卡');
+result=await request('admin/teacher-photo','DELETE',undefined,true);check(result.r.ok,'老师可以停用鼓励照片');
+result=await request('teacher-photo');check(result.body.available===false,'停用后公共入口不可用');
+result=await request('admin/lessons','POST',{name:'未来练习测试',date:'2099-01-01',assets:[asset.id]},true);const future=result.body.lesson;
+await request('admin/lessons/'+future.id,'PATCH',{status:'published'},true);result=await request('lessons');check(!result.body.lessons.some(l=>l.id===future.id),'未来日期不提前出现在家庭题册');
+result=await request('logout','POST',undefined,true);check(result.r.ok&&/Max-Age=0/.test(result.r.headers.get('set-cookie')),'退出清除浏览器会话');
+console.log('API 测试通过，共 '+count+' 项。测试题册保留在本地测试数据目录。');

@@ -1,0 +1,7 @@
+node_modules/
+.next/
+.iga/
+.local-data/
+.env*
+!.env.example
+verification/
