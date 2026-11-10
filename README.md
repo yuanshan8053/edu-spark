@@ -2,6 +2,10 @@
 
 老师维护公共题册，家庭与孩子在题图上手写。家庭无需应用账号；孩子档案、陪伴照片和作答保存在当前浏览器。
 
+## 维护入口
+
+继续维护前，请先阅读 [AGENTS.md](AGENTS.md) 和 [DEPLOYMENT.md](DEPLOYMENT.md)。现有应用使用 IGA Pages 的 `companion-workbook` 项目；固定入口为 `https://companion-workbook.microfish.top/`。GitHub 合并与 Pages 部署是独立操作，目前没有自动部署。
+
 ## 功能
 
 - 老师登录后上传题图、排序、保存草稿、预览、发布和下架。
